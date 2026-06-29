@@ -767,7 +767,18 @@ async function processUserMessage(externalUserid, content, msgid, msgKfId, wxCli
                                 fetchOpts.body = JSON.stringify({ event: 'keyword_match', ...vars });
                             }
                         }
-                        fetch(url, fetchOpts).catch(() => {});
+                        fetch(url, fetchOpts).then(async (resp) => {
+                            if (!resp.ok) {
+                                const text = await resp.text().catch(() => '');
+                                await debugLogger.error('webhook', `Webhook 请求失败: HTTP ${resp.status}`, {
+                                    url, method, status: resp.status, body: text.slice(0, 500), keyword: rule.keyword,
+                                });
+                            }
+                        }).catch(async (err) => {
+                            await debugLogger.error('webhook', `Webhook 网络错误: ${err.message}`, {
+                                url, method, keyword: rule.keyword,
+                            });
+                        });
                     }
                 }
             }

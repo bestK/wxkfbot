@@ -126,7 +126,7 @@ export async function handleKFSendMessage(request, env) {
             return ApiResponse.badRequest('缺少参数 touser, open_kfid 或 msgtype');
         }
         const kf = createKFRouter(env);
-        const result = await kf.sendMsg(body);
+        const result = await kf.request('POST', '/kf/send_msg', body);
         return ApiResponse.success(result, '发送消息成功');
     } catch (error) {
         await getLogger(env).error('wechat-api', `发送消息失败: ${error.message}`, {
@@ -142,7 +142,7 @@ export async function handleKFSyncMsg(request, env) {
     try {
         const body = await request.json();
         const kf = createKFRouter(env);
-        const result = await kf.syncMsg(body.cursor, body.token, body.limit, body.voice_format, body.open_kfid);
+        const result = await kf.syncMessages(body.cursor, body.token, body.limit, body.voice_format, body.open_kfid);
         return ApiResponse.success(result, '同步消息成功');
     } catch (error) {
         await getLogger(env).error('wechat-api', `同步消息失败: ${error.message}`);
@@ -175,7 +175,7 @@ export async function handleKFCustomerInfo(request, env) {
             return ApiResponse.badRequest('缺少参数 external_userid_list');
         }
         const kf = createKFRouter(env);
-        const result = await kf.batchGetCustomer(body.external_userid_list, body.need_enter_scene_info);
+        const result = await kf.batchGetCustomers(body.external_userid_list, body.need_enter_scene_info);
         return ApiResponse.success(result, '获取客户信息成功');
     } catch (error) {
         await getLogger(env).error('wechat-api', `获取客户信息失败: ${error.message}`);
@@ -205,7 +205,7 @@ export async function handleKFRecallMsg(request, env) {
             return ApiResponse.badRequest('缺少参数 msgid');
         }
         const kf = createKFRouter(env);
-        const result = await kf.recallMsg(body.msgid);
+        const result = await kf.recallMessage(body.msgid, body.open_kfid);
         return ApiResponse.success(result, '撤回消息成功');
     } catch (error) {
         await getLogger(env).error('wechat-api', `撤回消息失败: ${error.message}`);
