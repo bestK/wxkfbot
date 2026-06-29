@@ -4,6 +4,8 @@
 
 [![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/bestk/wxkfbot)
 
+![管理后台预览](images/preview.png)
+
 ## 功能特点
 
 - 基于 Cloudflare Worker，无需服务器，全球边缘部署
