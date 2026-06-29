@@ -4,7 +4,8 @@
       <template #header>
         <div class="card-header">
           <span class="card-title">日志开关</span>
-          <el-switch v-model="enabled" :loading="toggling" @change="toggleDebug" :class="{ 'switch-off': !enabled }" active-text="记录中" inactive-text="已关闭" />
+          <el-switch v-model="enabled" :loading="toggling" @change="toggleDebug" />
+          <span class="switch-label" :class="{ active: enabled }">{{ enabled ? '记录中' : '已关闭' }}</span>
         </div>
       </template>
       <div class="form-tip">
@@ -123,7 +124,8 @@ function formatTime(ts: number) {
 .card-title { font-weight: 600; font-size: 14px; }
 .header-actions { display: flex; gap: 8px; }
 .form-tip { font-size: 12px; color: #999; }
-.switch-off :deep(.el-switch__label--left span) { color: #999 !important; }
+.switch-label { font-size: 13px; margin-left: 8px; color: #999; }
+.switch-label.active { color: var(--el-color-success, #67c23a); }
 .empty-state { padding: 20px 0; }
 .log-list { display: flex; flex-direction: column; gap: 12px; max-height: 600px; overflow-y: auto; }
 .log-item { padding: 10px 12px; border-radius: 6px; background: var(--bg-surface, #f9f9f9); border: 1px solid var(--border, #eee); }
