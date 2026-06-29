@@ -122,8 +122,8 @@ export default {
             }
 
             // ==================== 客服管理API ====================
-            // 管理接口鉴权
-            if (url.pathname.startsWith('/kf/') || url.pathname === '/admin') {
+            // 管理接口鉴权（排除 /admin GET 页面加载）
+            if (url.pathname.startsWith('/kf/') || (url.pathname === '/admin' && request.method !== 'GET')) {
                 const authError = verifyAdminKey(request, env);
                 if (authError) return authError;
             }
