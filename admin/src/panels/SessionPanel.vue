@@ -4,10 +4,7 @@
     <div class="session-list">
       <div class="list-header">
         <span class="title">会话列表</span>
-        <el-button v-if="!loading" type="primary" size="small" @click="loadSessions" circle>
-          <el-icon><Refresh /></el-icon>
-        </el-button>
-        <el-icon v-else class="is-loading"><Loading /></el-icon>
+        <el-button size="small" @click="loadSessions" :loading="loading" :icon="Refresh" circle />
       </div>
 
       <div class="list-body">
@@ -266,7 +263,7 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, onMounted, onUnmounted, markRaw } from 'vue'
 import { ElMessage } from 'element-plus'
-import { EditPen, Picture, Microphone, VideoCamera, Document, Link, Monitor, Menu, Location } from '@element-plus/icons-vue'
+import { EditPen, Picture, Microphone, VideoCamera, Document, Link, Monitor, Menu, Location, Refresh } from '@element-plus/icons-vue'
 import { api, mediaUrl } from '../api'
 
 const loading = ref(false)
@@ -874,7 +871,7 @@ onUnmounted(() => {
   padding: 12px 16px;
   border-bottom: 1px solid var(--el-border-color-lighter);
 }
-.list-header .title { font-weight: 600; font-size: 14px; }
+.list-header .title { font-weight: 600; font-size: 14px; color: var(--text-primary); }
 
 .list-body {
   flex: 1;

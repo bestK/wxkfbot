@@ -254,7 +254,7 @@ html, body { height: 100%; background: var(--bg-root); color: var(--text-primary
   display: flex; flex-direction: column; flex-shrink: 0;
 }
 .sidebar-brand {
-  padding: 20px; display: flex; align-items: center; gap: 10px;
+  padding: 16px; display: flex; align-items: center; gap: 10px;
   border-bottom: 1px solid var(--border);
   font-family: var(--font-mono); font-weight: 700; font-size: 16px; letter-spacing: 2px;
 }
@@ -277,7 +277,7 @@ html, body { height: 100%; background: var(--bg-root); color: var(--text-primary
   padding: 16px 28px; border-bottom: 1px solid var(--border); background: var(--bg-surface);
   display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;
 }
-.main-header h1 { font-size: 16px; font-weight: 600; }
+.main-header h1 { font-size: 16px; font-weight: 600; color: var(--text-primary); }
 .header-status { display: flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); }
 .status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: pulse 2s infinite; }
 .main-content { flex: 1; padding: 24px 28px; overflow-y: auto; }

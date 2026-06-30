@@ -4,9 +4,7 @@
       <el-button type="primary" @click="showAddDialog = true">
         <el-icon><Plus /></el-icon> 添加客服帐号
       </el-button>
-      <el-button @click="loadAccounts" :loading="loading" circle>
-        <el-icon><Refresh /></el-icon>
-      </el-button>
+      <el-button @click="loadAccounts" :loading="loading" :icon="Refresh" circle />
     </div>
 
     <el-card shadow="never" class="panel-card">
@@ -134,6 +132,7 @@
 <script setup lang="ts">
 import { ref, onMounted, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Refresh } from '@element-plus/icons-vue'
 import { api } from '../api'
 import Cropper from 'cropperjs'
 import 'cropperjs/dist/cropper.css'
