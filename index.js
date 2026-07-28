@@ -15,6 +15,8 @@ import {
     handleKFServiceState, handleKFServiceStateTrans, handleKFSendMessage, handleKFSyncMsg,
     handleKFCustomerInfo, handleKFStatistics, handleKFRecallMsg, handleKFSendWelcomeMsg,
     handleKFSentMessages, handleKFMediaProxy,
+    handleKFFixedReplyList, handleKFFixedReplySet, handleKFFixedReplyImage,
+    handleKFFixedReplyImageGet, handleKFFixedReplyDelete,
 } from './kf-routes.js';
 
 export default {
@@ -178,6 +180,21 @@ export default {
             }
             if (url.pathname === '/kf/send_welcome_msg' && request.method === 'POST') {
                 return handleKFSendWelcomeMsg(request, env);
+            }
+            if (url.pathname === '/kf/fixed_replies' && request.method === 'GET') {
+                return handleKFFixedReplyList(env);
+            }
+            if (url.pathname === '/kf/fixed_reply' && request.method === 'POST') {
+                return handleKFFixedReplySet(request, env);
+            }
+            if (url.pathname === '/kf/fixed_reply/image' && request.method === 'POST') {
+                return handleKFFixedReplyImage(request, env);
+            }
+            if (url.pathname === '/kf/fixed_reply/image' && request.method === 'GET') {
+                return handleKFFixedReplyImageGet(request, env);
+            }
+            if (url.pathname === '/kf/fixed_reply/delete' && request.method === 'POST') {
+                return handleKFFixedReplyDelete(request, env);
             }
             // ==================== 管理界面 ====================
             if (url.pathname === '/admin' && request.method === 'GET') {
@@ -759,6 +776,10 @@ async function processUserMessage(externalUserid, content, msgid, msgKfId, wxCli
     }
 
     try {
+        // 固定回复拦截：命中且启用则直接回复固定内容，完全跳过 AI
+        const fixedHandled = await tryFixedReply(env, msgKfId, externalUserid, content, msgid, wxClient, messageTracker, debugLogger);
+        if (fixedHandled) return;
+
         // 读取动态系统提示词（KV 优先，环境变量兜底）
         let systemPrompt = env.SYSTEM_PROMPT || 'you are helpful assistant';
         try {
@@ -908,6 +929,71 @@ async function processUserMessage(externalUserid, content, msgid, msgKfId, wxCli
             success: false,
         });
     }
+}
+
+/**
+ * 固定回复：命中某客服的固定回复配置时直接发送并跳过 AI。
+ * 返回 true 表示已处理。
+ */
+async function tryFixedReply(env, openKfid, externalUserid, content, msgid, wxClient, messageTracker, debugLogger) {
+    try {
+        const raw = await env.CONVERSATIONS.get('__FIXED_REPLIES__');
+        if (!raw) return false;
+        const map = JSON.parse(raw);
+        const cfg = map[openKfid];
+        if (!cfg || !cfg.enabled) return false;
+
+        if (cfg.type === 'image') {
+            const mediaId = await resolveFixedReplyMediaId(env, openKfid, map, cfg, wxClient);
+            if (!mediaId) return false;
+            await wxClient.sendImageMessage(externalUserid, openKfid, mediaId);
+            await saveSentMessage(env, openKfid, externalUserid, 'image', { image: { media_id: mediaId } });
+        } else {
+            const text = String(cfg.text || '').trim();
+            if (!text) return false;
+            await wxClient.sendTextMessage(externalUserid, openKfid, text);
+            await saveSentMessage(env, openKfid, externalUserid, 'text', { text: { content: text } });
+        }
+
+        await messageTracker.markMessageAsProcessed(msgid, {
+            externalUserid, content, fixedReply: true, success: true,
+        });
+        return true;
+    } catch (error) {
+        await debugLogger.error('fixed-reply', `固定回复发送失败: ${error.message}`, {
+            externalUserid, openKfid, msgid, stack: error.stack,
+        });
+        return false;
+    }
+}
+
+/**
+ * 获取固定回复图片可用的 media_id。
+ * 企业微信临时素材仅 3 天有效，缓存的 media_id 若 <2.5 天则复用，
+ * 否则从 KV 读取图片字节重新上传，并回写缓存。
+ */
+async function resolveFixedReplyMediaId(env, openKfid, map, cfg, wxClient) {
+    const MAX_AGE = 2.5 * 24 * 60 * 60 * 1000;
+    const img = cfg.image || {};
+    if (img.media_id && img.media_uploaded_at && (Date.now() - img.media_uploaded_at) < MAX_AGE) {
+        return img.media_id;
+    }
+    const { value, metadata } = await env.CONVERSATIONS.getWithMetadata(
+        `__FIXED_REPLY_IMG__${openKfid}`,
+        { type: 'arrayBuffer' },
+    );
+    if (!value) return null;
+    const contentType = metadata?.content_type || img.content_type || 'image/png';
+    const filename = metadata?.filename || img.filename || 'image.png';
+    const file = new File([value], filename, { type: contentType });
+    const { media_id } = await wxClient.uploadMedia(wxClient.mediaType.image, file, filename);
+    // 回写缓存的 media_id
+    map[openKfid] = {
+        ...cfg,
+        image: { ...img, filename, content_type: contentType, media_id, media_uploaded_at: Date.now() },
+    };
+    await env.CONVERSATIONS.put('__FIXED_REPLIES__', JSON.stringify(map));
+    return media_id;
 }
 
 /**

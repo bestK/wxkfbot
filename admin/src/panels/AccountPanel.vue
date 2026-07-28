@@ -23,11 +23,22 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="280" align="right">
+        <el-table-column label="固定回复" width="120" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="fixedReplies[row.open_kfid]?.enabled" size="small" type="success">
+              {{ fixedReplies[row.open_kfid].type === 'image' ? '图片' : '文字' }}
+            </el-tag>
+            <el-text v-else type="info" size="small">未开启</el-text>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="360" align="right">
           <template #default="{ row }">
             <el-button-group>
               <el-button size="small" @click="openEdit(row)">
                 <el-icon><Edit /></el-icon> 编辑
+              </el-button>
+              <el-button size="small" @click="openFixedReply(row)">
+                <el-icon><ChatLineSquare /></el-icon> 固定回复
               </el-button>
               <el-button size="small" @click="getLink(row)">
                 <el-icon><Link /></el-icon> 链接
@@ -126,14 +137,68 @@
         </template>
       </el-input>
     </el-dialog>
+
+    <!-- 固定回复对话框 -->
+    <el-dialog v-model="showFixedDialog" title="固定回复" width="480px" destroy-on-close>
+      <el-alert type="info" :closable="false" show-icon style="margin-bottom:16px">
+        <template #title>开启后，该客服收到的所有消息都将回复固定内容，不再走 AI。</template>
+      </el-alert>
+      <el-form :model="fixedForm" label-width="72px">
+        <el-form-item label="客服">
+          <el-text class="mono" type="info" size="small">{{ fixedForm.name }} ({{ fixedForm.open_kfid }})</el-text>
+        </el-form-item>
+        <el-form-item label="启用">
+          <el-switch v-model="fixedForm.enabled" />
+        </el-form-item>
+        <el-form-item label="回复类型">
+          <el-radio-group v-model="fixedForm.type" :disabled="!fixedForm.enabled">
+            <el-radio-button value="text">文字</el-radio-button>
+            <el-radio-button value="image">图片</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="fixedForm.type === 'text'" label="文字内容">
+          <el-input
+            v-model="fixedForm.text"
+            type="textarea"
+            :rows="4"
+            :disabled="!fixedForm.enabled"
+            placeholder="输入固定回复的文字内容"
+            maxlength="1024"
+            show-word-limit
+          />
+        </el-form-item>
+        <el-form-item v-else label="图片">
+          <div class="fixed-image-section">
+            <div class="fixed-image-preview" v-if="fixedForm.imagePreview || fixedForm.hasImage">
+              <img :src="fixedForm.imagePreview || fixedImageUrl" class="fixed-image" />
+            </div>
+            <div class="fixed-image-empty" v-else>
+              <el-icon :size="24" color="#bbb"><Picture /></el-icon>
+              <span>未上传图片</span>
+            </div>
+            <el-button size="small" :disabled="!fixedForm.enabled" @click="triggerFixedImageSelect">
+              <el-icon><Upload /></el-icon> 选择图片
+            </el-button>
+            <input ref="fixedImageInputRef" type="file" accept="image/png,image/jpeg,image/gif" hidden @change="handleFixedImageSelect" />
+          </div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button v-if="fixedForm.hasImage || fixedReplies[fixedForm.open_kfid]" type="danger" plain @click="handleFixedDelete" style="margin-right:auto">
+          删除配置
+        </el-button>
+        <el-button @click="showFixedDialog = false">取消</el-button>
+        <el-button type="primary" @click="handleFixedSave" :loading="fixedSaving">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, nextTick } from 'vue'
+import { ref, onMounted, nextTick, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
-import { api } from '../api'
+import { api, getAdminKey } from '../api'
 import Cropper from 'cropperjs'
 import 'cropperjs/dist/cropper.css'
 
@@ -156,11 +221,122 @@ const cropImgSrc = ref('')
 const avatarUploading = ref(false)
 let cropper: Cropper | null = null
 
+// 固定回复
+const fixedReplies = ref<Record<string, any>>({})
+const showFixedDialog = ref(false)
+const fixedSaving = ref(false)
+const fixedImageInputRef = ref<HTMLInputElement>()
+const fixedForm = ref({
+  open_kfid: '',
+  name: '',
+  enabled: false,
+  type: 'text',
+  text: '',
+  hasImage: false,
+  imageFile: null as File | null,
+  imagePreview: '',
+})
+// 预览已存图片时加时间戳避免缓存
+const fixedImageUrl = computed(() =>
+  `${import.meta.env.VITE_API_BASE || ''}/kf/fixed_reply/image?open_kfid=${encodeURIComponent(fixedForm.value.open_kfid)}&admin_key=${encodeURIComponent(getAdminKey())}&t=${Date.now()}`
+)
+
+async function loadFixedReplies() {
+  try {
+    const res = await api.get('/kf/fixed_replies')
+    fixedReplies.value = res?.replies || {}
+  } catch (e: any) {
+    // 静默失败，不阻塞帐号列表
+    console.error('加载固定回复配置失败', e)
+  }
+}
+
+function openFixedReply(row: any) {
+  const cfg = fixedReplies.value[row.open_kfid]
+  fixedForm.value = {
+    open_kfid: row.open_kfid,
+    name: row.name,
+    enabled: cfg?.enabled || false,
+    type: cfg?.type || 'text',
+    text: cfg?.text || '',
+    hasImage: cfg?.has_image || false,
+    imageFile: null,
+    imagePreview: '',
+  }
+  showFixedDialog.value = true
+}
+
+function triggerFixedImageSelect() {
+  fixedImageInputRef.value?.click()
+}
+
+function handleFixedImageSelect(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  if (file.size > 2 * 1024 * 1024) {
+    ElMessage.warning('图片大小不能超过 2MB')
+    input.value = ''
+    return
+  }
+  fixedForm.value.imageFile = file
+  const reader = new FileReader()
+  reader.onload = (ev) => { fixedForm.value.imagePreview = ev.target?.result as string }
+  reader.readAsDataURL(file)
+  input.value = ''
+}
+
+async function handleFixedSave() {
+  const f = fixedForm.value
+  if (f.enabled && f.type === 'text' && !f.text.trim()) {
+    return ElMessage.warning('请输入文字内容')
+  }
+  if (f.enabled && f.type === 'image' && !f.hasImage && !f.imageFile) {
+    return ElMessage.warning('请先上传图片')
+  }
+  fixedSaving.value = true
+  try {
+    // 先上传图片（若有新选择）
+    if (f.type === 'image' && f.imageFile) {
+      const form = new FormData()
+      form.append('open_kfid', f.open_kfid)
+      form.append('file', f.imageFile, f.imageFile.name)
+      await api.upload('/kf/fixed_reply/image', form)
+    }
+    await api.post('/kf/fixed_reply', {
+      open_kfid: f.open_kfid,
+      enabled: f.enabled,
+      type: f.type,
+      text: f.text,
+    })
+    ElMessage.success('保存成功')
+    showFixedDialog.value = false
+    await loadFixedReplies()
+  } catch (e: any) {
+    ElMessage.error(e.message)
+  } finally {
+    fixedSaving.value = false
+  }
+}
+
+async function handleFixedDelete() {
+  await ElMessageBox.confirm('确认删除该客服的固定回复配置？', '删除确认', { type: 'warning' })
+  try {
+    await api.post('/kf/fixed_reply/delete', { open_kfid: fixedForm.value.open_kfid })
+    ElMessage.success('已删除')
+    showFixedDialog.value = false
+    await loadFixedReplies()
+  } catch (e: any) {
+    ElMessage.error(e.message)
+  }
+}
+
 async function loadAccounts() {
   loading.value = true
   try {
     const res = await api.get('/kf/accounts')
     accounts.value = res?.account_list || []
+    await loadFixedReplies()
   } catch (e: any) {
     ElMessage.error(e.message)
   } finally {
@@ -332,6 +508,16 @@ onMounted(loadAccounts)
 .account-cell { display: flex; align-items: center; gap: 10px; }
 .account-name { font-weight: 500; }
 .mono { font-family: var(--font-mono, 'JetBrains Mono', monospace); font-size: 12px; }
+
+/* Fixed Reply */
+.fixed-image-section { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.fixed-image-preview { border: 1px solid var(--border, #e0e0e0); border-radius: 6px; overflow: hidden; }
+.fixed-image { display: block; max-width: 200px; max-height: 160px; object-fit: contain; }
+.fixed-image-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+  width: 140px; height: 100px; border: 1px dashed var(--border, #e0e0e0); border-radius: 6px;
+  color: var(--text-muted, #999); font-size: 12px;
+}
 
 /* Profile Editor */
 .profile-editor {

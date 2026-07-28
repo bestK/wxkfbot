@@ -269,3 +269,167 @@ export async function handleKFSendWelcomeMsg(request, env) {
         return ApiResponse.internalError('欢迎语发送失败', { error: error.message });
     }
 }
+
+// ==================== 客服固定回复 ====================
+// 存储说明：
+//   __FIXED_REPLIES__            —— JSON map，key 为 open_kfid，保存开关/类型/文字/图片元数据
+//   __FIXED_REPLY_IMG__{kfid}    —— 图片原始字节（ArrayBuffer），content_type 存在 metadata
+// 图片按需重新上传换取临时 media_id（企业微信临时素材仅 3 天有效），缓存在配置里复用。
+
+const FIXED_REPLIES_KEY = '__FIXED_REPLIES__';
+const FIXED_REPLY_IMG_PREFIX = '__FIXED_REPLY_IMG__';
+
+async function readFixedReplies(env) {
+    const raw = await env.CONVERSATIONS.get(FIXED_REPLIES_KEY);
+    return raw ? JSON.parse(raw) : {};
+}
+
+async function writeFixedReplies(env, map) {
+    await env.CONVERSATIONS.put(FIXED_REPLIES_KEY, JSON.stringify(map));
+}
+
+/**
+ * 获取全部固定回复配置（不含图片字节，附带 has_image 标记）
+ * GET /kf/fixed_replies
+ */
+export async function handleKFFixedReplyList(env) {
+    try {
+        const map = await readFixedReplies(env);
+        const result = {};
+        for (const [kfid, cfg] of Object.entries(map)) {
+            result[kfid] = {
+                enabled: !!cfg.enabled,
+                type: cfg.type || 'text',
+                text: cfg.text || '',
+                has_image: !!(cfg.image && cfg.image.filename),
+                image_filename: cfg.image?.filename || '',
+            };
+        }
+        return ApiResponse.success({ replies: result }, '获取固定回复配置成功');
+    } catch (error) {
+        await getLogger(env).error('wechat-api', `获取固定回复配置失败: ${error.message}`);
+        return ApiResponse.internalError('获取固定回复配置失败', { error: error.message });
+    }
+}
+
+/**
+ * 设置固定回复的开关/类型/文字
+ * POST /kf/fixed_reply  { open_kfid, enabled, type, text }
+ */
+export async function handleKFFixedReplySet(request, env) {
+    try {
+        const body = await request.json();
+        if (!body.open_kfid) {
+            return ApiResponse.badRequest('缺少客服ID参数 open_kfid');
+        }
+        const type = body.type === 'image' ? 'image' : 'text';
+        if (type === 'text' && body.enabled && !String(body.text || '').trim()) {
+            return ApiResponse.badRequest('文字固定回复内容不能为空');
+        }
+        const map = await readFixedReplies(env);
+        const prev = map[body.open_kfid] || {};
+        map[body.open_kfid] = {
+            ...prev,
+            enabled: !!body.enabled,
+            type,
+            text: body.text != null ? String(body.text) : (prev.text || ''),
+            image: prev.image || null,
+        };
+        if (type === 'image' && body.enabled && !map[body.open_kfid].image?.filename) {
+            return ApiResponse.badRequest('图片固定回复需要先上传图片');
+        }
+        await writeFixedReplies(env, map);
+        return ApiResponse.success(null, '固定回复配置已更新');
+    } catch (error) {
+        await getLogger(env).error('wechat-api', `更新固定回复配置失败: ${error.message}`);
+        return ApiResponse.internalError('更新固定回复配置失败', { error: error.message });
+    }
+}
+
+/**
+ * 上传固定回复图片（原始字节持久化到 KV）
+ * POST /kf/fixed_reply/image  multipart: open_kfid, file
+ */
+export async function handleKFFixedReplyImage(request, env) {
+    try {
+        const form = await request.formData();
+        const openKfid = form.get('open_kfid');
+        const file = form.get('file');
+        if (!openKfid) {
+            return ApiResponse.badRequest('缺少客服ID参数 open_kfid');
+        }
+        if (!file || !(file instanceof File) || file.size === 0) {
+            return ApiResponse.badRequest('图片文件为空或未提供');
+        }
+        const buffer = await file.arrayBuffer();
+        const contentType = file.type || 'image/png';
+        const filename = file.name || 'image.png';
+        await env.CONVERSATIONS.put(`${FIXED_REPLY_IMG_PREFIX}${openKfid}`, buffer, {
+            metadata: { content_type: contentType, filename },
+        });
+        const map = await readFixedReplies(env);
+        const prev = map[openKfid] || {};
+        map[openKfid] = {
+            ...prev,
+            type: 'image',
+            // 更换图片后清空缓存的 media_id，强制下次发送时重新上传
+            image: { filename, content_type: contentType, media_id: '', media_uploaded_at: 0 },
+        };
+        await writeFixedReplies(env, map);
+        return ApiResponse.success({ filename }, '固定回复图片已上传');
+    } catch (error) {
+        await getLogger(env).error('wechat-api', `上传固定回复图片失败: ${error.message}`);
+        return ApiResponse.internalError('上传固定回复图片失败', { error: error.message });
+    }
+}
+
+/**
+ * 回显固定回复图片给前端预览
+ * GET /kf/fixed_reply/image?open_kfid=
+ */
+export async function handleKFFixedReplyImageGet(request, env) {
+    try {
+        const url = new URL(request.url);
+        const openKfid = url.searchParams.get('open_kfid');
+        if (!openKfid) {
+            return ApiResponse.badRequest('缺少参数 open_kfid');
+        }
+        const { value, metadata } = await env.CONVERSATIONS.getWithMetadata(
+            `${FIXED_REPLY_IMG_PREFIX}${openKfid}`,
+            { type: 'arrayBuffer' },
+        );
+        if (!value) {
+            return ApiResponse.notFound('未找到固定回复图片');
+        }
+        return new Response(value, {
+            headers: {
+                'Content-Type': metadata?.content_type || 'application/octet-stream',
+                'Cache-Control': 'no-cache',
+            },
+        });
+    } catch (error) {
+        await getLogger(env).error('wechat-api', `获取固定回复图片失败: ${error.message}`);
+        return ApiResponse.internalError('获取固定回复图片失败', { error: error.message });
+    }
+}
+
+/**
+ * 删除某客服的固定回复配置
+ * POST /kf/fixed_reply/delete  { open_kfid }
+ */
+export async function handleKFFixedReplyDelete(request, env) {
+    try {
+        const body = await request.json();
+        if (!body.open_kfid) {
+            return ApiResponse.badRequest('缺少客服ID参数 open_kfid');
+        }
+        const map = await readFixedReplies(env);
+        delete map[body.open_kfid];
+        await writeFixedReplies(env, map);
+        await env.CONVERSATIONS.delete(`${FIXED_REPLY_IMG_PREFIX}${body.open_kfid}`);
+        return ApiResponse.success(null, '固定回复配置已删除');
+    } catch (error) {
+        await getLogger(env).error('wechat-api', `删除固定回复配置失败: ${error.message}`);
+        return ApiResponse.internalError('删除固定回复配置失败', { error: error.message });
+    }
+}
